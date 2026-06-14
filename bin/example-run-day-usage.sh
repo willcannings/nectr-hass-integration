@@ -3,7 +3,6 @@
 # environment variables and passing along any provided date
 set -eu
 
-export NECTR_ACCOUNT_NUMBER="A-********"
 export NECTR_EMAIL="EMAIL"
 export NECTR_PASSWORD="PASSWORD"
 

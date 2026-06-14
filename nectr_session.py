@@ -10,6 +10,16 @@ import httpx
 
 
 @dataclass
+class Account:
+    """Nectr account available to the authenticated user."""
+
+    number: str
+    status: str
+    address: str
+    state: str
+
+
+@dataclass
 class HourlyDataResponse:
     """Response object for hourly electricity usage data"""
     success: bool
@@ -25,23 +35,19 @@ class NectrSession:
     Async session for interacting with the nectr GraphQL API.
 
     Usage:
-        session = NectrSession(account_number="A-EXAMPLE")
+        session = NectrSession()
         if await session.login("email@example.com", "password"):
-            data = await session.get_hourly_data(date(2025, 11, 5))
-            if data.success:
-                print(f"Usage: {data.usage}")
+            accounts = await session.get_accounts()
+            if accounts:
+                data = await session.get_hourly_data(
+                    accounts[0].number,
+                    date(2025, 11, 5),
+                )
     """
 
     BASE_URL = "https://mobile.nectr.com.au/graphql"
 
-    def __init__(self, account_number: str):
-        """
-        Initialise the nectr session.
-
-        Args:
-            account_number: Your nectr account number (e.g., "A-EXAMPLE")
-        """
-        self.account_number = account_number
+    def __init__(self):
         self._token: Optional[str] = None
         self._refresh_token: Optional[str] = None
 
@@ -108,11 +114,95 @@ class NectrSession:
             print(f"Login failed: {e}")
             return False
 
-    async def get_hourly_data(self, day: date) -> HourlyDataResponse:
+    async def get_accounts(self) -> list[Account]:
         """
-        Fetch hourly electricity usage data for a specific day.
+        Fetch the accounts available to the authenticated user.
+
+        Returns:
+            A list of Account objects, or an empty list if the request fails.
+
+        Note:
+            Requires a successful login() call first to obtain an auth token.
+        """
+        if not self._token:
+            return []
+
+        query = """
+        query getUserBrief {
+            userBrief {
+                id
+                fullName
+                firstName
+                lastName
+                email
+                mobile
+                dateOfBirth
+                accounts {
+                    lnspId
+                    number
+                    status
+                    address
+                    state
+                    supplyStatus
+                    __typename
+                }
+                message
+                __typename
+            }
+        }
+        """
+
+        headers = {
+            "x-client-type": "web",
+            "authorization": f"bearer {self._token}",
+            "app-version": "2.9.0",
+            "Content-Type": "application/json",
+        }
+
+        payload = {
+            "operationName": "getUserBrief",
+            "variables": {},
+            "query": query,
+        }
+
+        try:
+            async with httpx.AsyncClient() as client:
+                response = await client.post(
+                    self.BASE_URL,
+                    json=payload,
+                    headers=headers,
+                    timeout=30.0,
+                )
+                response.raise_for_status()
+
+                data = response.json()
+                user_brief = data["data"]["userBrief"]
+                if not user_brief or user_brief.get("message"):
+                    return []
+
+                return [
+                    Account(
+                        number=account["number"],
+                        status=account["status"],
+                        address=account["address"],
+                        state=account["state"],
+                    )
+                    for account in user_brief.get("accounts", [])
+                ]
+
+        except (AttributeError, httpx.HTTPError, KeyError, TypeError, ValueError):
+            return []
+
+    async def get_hourly_data(
+        self,
+        account_number: str,
+        day: date,
+    ) -> HourlyDataResponse:
+        """
+        Fetch hourly electricity usage data for an account on a specific day.
 
         Args:
+            account_number: The account number returned by get_accounts().
             day: The date to fetch data for
 
         Returns:
@@ -215,7 +305,7 @@ class NectrSession:
             "operationName": "getUsageInfo",
             "variables": {
                 "isSmartMeterUser": True,
-                "accountNumber": self.account_number,
+                "accountNumber": account_number,
                 "pageNumber": 1,
                 "granularity": "HOURLY",
                 "toDate": to_date,

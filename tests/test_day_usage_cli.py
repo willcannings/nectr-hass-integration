@@ -1,10 +1,15 @@
 import argparse
+from contextlib import redirect_stderr, redirect_stdout
 from datetime import date, datetime
 import importlib.util
+import io
 import os
 from pathlib import Path
+from types import SimpleNamespace
 import unittest
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, Mock, patch
+
+from nectr_session import HourlyDataResponse
 
 
 SCRIPT_PATH = Path(__file__).resolve().parent.parent / "bin" / "day-usage.py"
@@ -65,10 +70,59 @@ class DayUsageCliTests(unittest.TestCase):
     @staticmethod
     def required_environment():
         return {
-            "NECTR_ACCOUNT_NUMBER": "A-TEST",
             "NECTR_EMAIL": "test@example.com",
             "NECTR_PASSWORD": "password",
         }
+
+
+class DayUsageFetchTests(unittest.IsolatedAsyncioTestCase):
+    async def test_fetch_uses_first_discovered_account(self):
+        session = Mock()
+        session.login = AsyncMock(return_value=True)
+        session.get_accounts = AsyncMock(
+            return_value=[
+                SimpleNamespace(number="A-FIRST"),
+                SimpleNamespace(number="A-SECOND"),
+            ]
+        )
+        session.get_hourly_data = AsyncMock(
+            return_value=HourlyDataResponse(
+                success=True,
+                message="",
+                is_complete=False,
+                day=date(2026, 5, 12),
+                usage=[0.5],
+                hours=[23],
+            )
+        )
+
+        with (
+            patch.dict(os.environ, DayUsageCliTests.required_environment(), clear=True),
+            patch.object(day_usage_cli, "NectrSession", return_value=session),
+            redirect_stdout(io.StringIO()),
+        ):
+            exit_code = await day_usage_cli.fetch_and_print_usage(date(2026, 5, 12))
+
+        self.assertEqual(exit_code, 0)
+        session.get_accounts.assert_awaited_once_with()
+        session.get_hourly_data.assert_awaited_once_with(
+            "A-FIRST",
+            date(2026, 5, 12),
+        )
+
+    async def test_fetch_fails_when_no_accounts_are_returned(self):
+        session = Mock()
+        session.login = AsyncMock(return_value=True)
+        session.get_accounts = AsyncMock(return_value=[])
+
+        with (
+            patch.dict(os.environ, DayUsageCliTests.required_environment(), clear=True),
+            patch.object(day_usage_cli, "NectrSession", return_value=session),
+            redirect_stderr(io.StringIO()),
+        ):
+            exit_code = await day_usage_cli.fetch_and_print_usage(date(2026, 5, 12))
+
+        self.assertEqual(exit_code, 1)
 
 
 if __name__ == "__main__":

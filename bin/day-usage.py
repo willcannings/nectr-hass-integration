@@ -44,7 +44,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 async def fetch_and_print_usage(day: date) -> int:
-    session = NectrSession(account_number=os.environ["NECTR_ACCOUNT_NUMBER"])
+    session = NectrSession()
 
     if not await session.login(
         os.environ["NECTR_EMAIL"],
@@ -53,7 +53,12 @@ async def fetch_and_print_usage(day: date) -> int:
         print("Login failed", file=sys.stderr)
         return 1
 
-    data = await session.get_hourly_data(day)
+    accounts = await session.get_accounts()
+    if not accounts:
+        print("No Nectr accounts found", file=sys.stderr)
+        return 1
+
+    data = await session.get_hourly_data(accounts[0].number, day)
     if not data.success:
         print(f"Failed to retrieve data: {data.message}", file=sys.stderr)
         return 1
@@ -74,7 +79,6 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     required_variables = (
-        "NECTR_ACCOUNT_NUMBER",
         "NECTR_EMAIL",
         "NECTR_PASSWORD",
     )

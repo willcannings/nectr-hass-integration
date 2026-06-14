@@ -8,11 +8,14 @@ electricity usage. The current API layer is `nectr_session.py`.
 ## API Reference
 
 - Read `api-docs/API.md` for the API overview.
-- Treat `api-docs/login.har` and `api-docs/day-usage.har` as the source of truth
-  for GraphQL operation names, variables, fields, headers, and date formats.
+- Treat `api-docs/emailAuthenticate.har`, `api-docs/getUserBrief.har`, and
+  `api-docs/getUsageInfo.har` as the source of truth for GraphQL operation
+  names, variables, fields, headers, and date formats.
 - The API endpoint is `https://mobile.nectr.com.au/graphql`.
-- Authenticate before requesting usage. Send the returned access token as
-  `Authorization: bearer <token>`.
+- Authenticate before requesting accounts or usage. Send the returned access
+  token as `Authorization: bearer <token>`.
+- Discover account numbers with `get_accounts()` rather than requiring users
+  to provide them during session construction.
 - Hourly usage requests use `DD/MM/YYYY` dates and an exclusive next-day
   `toDate`.
 - Usage entries are returned in descending hour order.
@@ -40,7 +43,7 @@ electricity usage. The current API layer is `nectr_session.py`.
 
 ## Credentials
 
-The local CLI reads `NECTR_ACCOUNT_NUMBER`, `NECTR_EMAIL`, and `NECTR_PASSWORD`
-from the environment. `bin/run-day-usage.sh` is a local-only credential wrapper
-and is ignored by Git. Never add it, live credentials, or newly captured bearer
-tokens to source files, fixtures, test output, or commits.
+The local CLI reads `NECTR_EMAIL` and `NECTR_PASSWORD` from the environment.
+`bin/run-day-usage.sh` is a local-only credential wrapper and is ignored by
+Git. Never add it, live credentials, or newly captured bearer tokens to source
+files, fixtures, test output, or commits.

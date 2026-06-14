@@ -2,25 +2,17 @@ import unittest
 from datetime import date
 from unittest.mock import patch
 
-from nectr_session import NectrSession
+from nectr_session import Account, NectrSession
 
 
 class FakeResponse:
+    response_data = {}
+
     def raise_for_status(self) -> None:
         pass
 
     def json(self) -> dict:
-        return {
-            "data": {
-                "getUsageInfo": {
-                    "message": "",
-                    "allUsage": [
-                        {"period": "23:00", "gridUsage": 0.5},
-                        {"period": "0:00", "gridUsage": 0.36},
-                    ],
-                }
-            }
-        }
+        return self.response_data
 
 
 class FakeAsyncClient:
@@ -38,12 +30,83 @@ class FakeAsyncClient:
 
 
 class NectrSessionTests(unittest.IsolatedAsyncioTestCase):
-    async def test_get_hourly_data_sends_har_compatible_graphql_request(self):
-        session = NectrSession(account_number="A-TEST")
+    async def test_get_accounts_sends_har_compatible_request_and_maps_accounts(self):
+        FakeResponse.response_data = {
+            "data": {
+                "userBrief": {
+                    "message": "",
+                    "accounts": [
+                        {
+                            "number": "A-FIRST",
+                            "status": "ACTIVE",
+                            "address": "1 Example Street",
+                            "state": "NSW",
+                        },
+                        {
+                            "number": "A-SECOND",
+                            "status": "CLOSED",
+                            "address": "2 Example Street",
+                            "state": "VIC",
+                        },
+                    ],
+                }
+            }
+        }
+        session = NectrSession()
         session._token = "access-token"
 
         with patch("nectr_session.httpx.AsyncClient", FakeAsyncClient):
-            result = await session.get_hourly_data(date(2026, 5, 12))
+            accounts = await session.get_accounts()
+
+        url, request = FakeAsyncClient.last_request
+        payload = request["json"]
+
+        self.assertEqual(url, "https://mobile.nectr.com.au/graphql")
+        self.assertEqual(request["headers"]["authorization"], "bearer access-token")
+        self.assertEqual(payload["operationName"], "getUserBrief")
+        self.assertEqual(payload["variables"], {})
+        self.assertIn("query getUserBrief", payload["query"])
+        self.assertIn("accounts {", payload["query"])
+        self.assertEqual(
+            accounts,
+            [
+                Account(
+                    number="A-FIRST",
+                    status="ACTIVE",
+                    address="1 Example Street",
+                    state="NSW",
+                ),
+                Account(
+                    number="A-SECOND",
+                    status="CLOSED",
+                    address="2 Example Street",
+                    state="VIC",
+                ),
+            ],
+        )
+
+    async def test_get_accounts_requires_authentication(self):
+        session = NectrSession()
+
+        self.assertEqual(await session.get_accounts(), [])
+
+    async def test_get_hourly_data_sends_har_compatible_graphql_request(self):
+        FakeResponse.response_data = {
+            "data": {
+                "getUsageInfo": {
+                    "message": "",
+                    "allUsage": [
+                        {"period": "23:00", "gridUsage": 0.5},
+                        {"period": "0:00", "gridUsage": 0.36},
+                    ],
+                }
+            }
+        }
+        session = NectrSession()
+        session._token = "access-token"
+
+        with patch("nectr_session.httpx.AsyncClient", FakeAsyncClient):
+            result = await session.get_hourly_data("A-TEST", date(2026, 5, 12))
 
         url, request = FakeAsyncClient.last_request
         payload = request["json"]
