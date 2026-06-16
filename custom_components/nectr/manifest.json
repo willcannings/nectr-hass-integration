@@ -1,0 +1,13 @@
+{
+  "domain": "nectr",
+  "name": "Nectr Energy",
+  "codeowners": ["@willcannings"],
+  "config_flow": true,
+  "dependencies": ["recorder"],
+  "documentation": "https://github.com/willcannings/nectr-hass-integration",
+  "integration_type": "service",
+  "iot_class": "cloud_polling",
+  "issue_tracker": "https://github.com/willcannings/nectr-hass-integration/issues",
+  "requirements": [],
+  "version": "0.1.0"
+}

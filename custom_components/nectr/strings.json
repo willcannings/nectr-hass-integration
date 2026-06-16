@@ -1,0 +1,40 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Connect to Nectr",
+        "description": "Enter your Nectr email and password.",
+        "data": {
+          "email": "Email",
+          "password": "Password"
+        }
+      },
+      "account": {
+        "title": "Choose account",
+        "description": "Pick the Nectr account to import, and how many days of past usage to backfill once at setup.",
+        "data": {
+          "account_number": "Account",
+          "days_to_load": "Days of history to load"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Failed to connect to Nectr. Please try again.",
+      "invalid_auth": "Invalid email or password.",
+      "no_accounts": "No Nectr accounts were found for this login."
+    },
+    "abort": {
+      "already_configured": "This Nectr account is already configured."
+    }
+  },
+  "entity": {
+    "sensor": {
+      "last_imported_date": {
+        "name": "Last imported date"
+      },
+      "last_day_usage": {
+        "name": "Last imported day usage"
+      }
+    }
+  }
+}

@@ -3,9 +3,10 @@ nectr API Client for Home Assistant Integration
 Provides async methods to authenticate and fetch hourly electricity usage data
 """
 
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import date, timedelta
-from typing import Optional
+from typing import AsyncIterator, Optional
 import httpx
 
 
@@ -47,9 +48,29 @@ class NectrSession:
 
     BASE_URL = "https://mobile.nectr.com.au/graphql"
 
-    def __init__(self):
+    def __init__(self, client: Optional[httpx.AsyncClient] = None):
+        """
+        Create a session.
+
+        Args:
+            client: Optional shared httpx.AsyncClient (e.g. Home Assistant's). When
+                provided it is reused for every request and never closed by this
+                session. When omitted, a short-lived client is created per request,
+                preserving the original standalone behaviour used by the CLI/tests.
+        """
         self._token: Optional[str] = None
         self._refresh_token: Optional[str] = None
+        self._client = client
+
+    @asynccontextmanager
+    async def _http_client(self) -> AsyncIterator[httpx.AsyncClient]:
+        """Yield an httpx client, reusing the injected one or creating a transient one."""
+        # Reuse an injected client without closing it (its owner manages its lifecycle).
+        if self._client is not None:
+            yield self._client
+        else:
+            async with httpx.AsyncClient() as client:
+                yield client
 
     async def login(self, email: str, password: str) -> bool:
         """
@@ -89,7 +110,7 @@ class NectrSession:
         }
 
         try:
-            async with httpx.AsyncClient() as client:
+            async with self._http_client() as client:
                 response = await client.post(
                     self.BASE_URL,
                     json=payload,
@@ -166,7 +187,7 @@ class NectrSession:
         }
 
         try:
-            async with httpx.AsyncClient() as client:
+            async with self._http_client() as client:
                 response = await client.post(
                     self.BASE_URL,
                     json=payload,
@@ -315,7 +336,7 @@ class NectrSession:
         }
 
         try:
-            async with httpx.AsyncClient() as client:
+            async with self._http_client() as client:
                 response = await client.post(
                     self.BASE_URL,
                     json=payload,

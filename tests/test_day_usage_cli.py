@@ -5,11 +5,16 @@ import importlib.util
 import io
 import os
 from pathlib import Path
+import sys
 from types import SimpleNamespace
 import unittest
 from unittest.mock import AsyncMock, Mock, patch
 
-from nectr_session import HourlyDataResponse
+sys.path.insert(
+    0, str(Path(__file__).resolve().parent.parent / "custom_components" / "nectr")
+)
+
+from nectr_session import HourlyDataResponse  # noqa: E402
 
 
 SCRIPT_PATH = Path(__file__).resolve().parent.parent / "bin" / "day-usage.py"

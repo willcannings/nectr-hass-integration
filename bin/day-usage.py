@@ -9,7 +9,7 @@ import sys
 from zoneinfo import ZoneInfo
 
 REPOSITORY_ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(REPOSITORY_ROOT))
+sys.path.insert(0, str(REPOSITORY_ROOT / "custom_components" / "nectr"))
 
 from nectr_session import NectrSession  # noqa: E402
 

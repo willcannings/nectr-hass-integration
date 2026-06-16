@@ -2,8 +2,11 @@
 
 ## Purpose
 
-This repository is being developed into a Home Assistant integration for Nectr
-electricity usage. The current API layer is `nectr_session.py`.
+This repository is a Home Assistant integration for Nectr electricity usage, packaged
+under `custom_components/nectr/`. The API layer is
+`custom_components/nectr/nectr_session.py`; it is kept independent of Home Assistant so
+it can be exercised by `bin/day-usage.py` and the tests. The integration imports hourly
+usage into the recorder as long-term external statistics for the Energy dashboard.
 
 ## API Reference
 

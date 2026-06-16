@@ -1,8 +1,14 @@
+import sys
 import unittest
 from datetime import date
+from pathlib import Path
 from unittest.mock import patch
 
-from nectr_session import Account, NectrSession
+sys.path.insert(
+    0, str(Path(__file__).resolve().parent.parent / "custom_components" / "nectr")
+)
+
+from nectr_session import Account, NectrSession  # noqa: E402
 
 
 class FakeResponse:
