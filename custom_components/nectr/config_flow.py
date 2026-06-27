@@ -17,15 +17,50 @@ from .const import (
     CONF_ACCOUNT_STATE,
     CONF_DAYS_TO_LOAD,
     CONF_EMAIL,
+    CONF_OFFPEAK_RATE,
     CONF_PASSWORD,
+    CONF_PEAK_END_HOUR,
+    CONF_PEAK_RATE,
+    CONF_PEAK_START_HOUR,
     DEFAULT_DAYS_TO_LOAD,
+    DEFAULT_PEAK_END_HOUR,
+    DEFAULT_PEAK_START_HOUR,
     DOMAIN,
     MAX_DAYS_TO_LOAD,
+    MAX_HOUR,
     MIN_DAYS_TO_LOAD,
+    MIN_HOUR,
 )
 from .nectr_session import Account, NectrSession
 
 _LOGGER = logging.getLogger(__name__)
+
+
+# A tariff rate in cents/kWh. Allows fractional cents and is entered as a plain number
+# box; the coordinator converts cents to dollars when building the cost statistic.
+def _rate_selector() -> selector.NumberSelector:
+    return selector.NumberSelector(
+        selector.NumberSelectorConfig(
+            min=0,
+            step=0.01,
+            mode=selector.NumberSelectorMode.BOX,
+            unit_of_measurement="cents/kWh",
+        )
+    )
+
+
+# An hour-of-day (0-23) used to delimit the peak tariff window.
+def _hour_selector() -> selector.NumberSelector:
+    return selector.NumberSelector(
+        selector.NumberSelectorConfig(
+            min=MIN_HOUR,
+            max=MAX_HOUR,
+            step=1,
+            mode=selector.NumberSelectorMode.BOX,
+            unit_of_measurement="h",
+        )
+    )
+
 
 USER_SCHEMA = vol.Schema(
     {
@@ -105,6 +140,10 @@ class NectrConfigFlow(ConfigFlow, domain=DOMAIN):
                     CONF_ACCOUNT_STATE: account.state,
                     CONF_ACCOUNT_ADDRESS: account.address,
                     CONF_DAYS_TO_LOAD: user_input[CONF_DAYS_TO_LOAD],
+                    CONF_PEAK_RATE: user_input[CONF_PEAK_RATE],
+                    CONF_OFFPEAK_RATE: user_input[CONF_OFFPEAK_RATE],
+                    CONF_PEAK_START_HOUR: user_input[CONF_PEAK_START_HOUR],
+                    CONF_PEAK_END_HOUR: user_input[CONF_PEAK_END_HOUR],
                 },
             )
 
@@ -131,6 +170,59 @@ class NectrConfigFlow(ConfigFlow, domain=DOMAIN):
                         unit_of_measurement="days",
                     )
                 ),
+                vol.Required(CONF_PEAK_RATE): _rate_selector(),
+                vol.Required(CONF_OFFPEAK_RATE): _rate_selector(),
+                vol.Required(
+                    CONF_PEAK_START_HOUR, default=DEFAULT_PEAK_START_HOUR
+                ): _hour_selector(),
+                vol.Required(
+                    CONF_PEAK_END_HOUR, default=DEFAULT_PEAK_END_HOUR
+                ): _hour_selector(),
             }
         )
         return self.async_show_form(step_id="account", data_schema=schema)
+
+    async def async_step_reconfigure(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Let an existing entry update its tariff (rates and peak window).
+
+        The four tariff fields are only collected at initial setup, so an entry created
+        before tariffs existed would otherwise record $0 cost forever. This step lets the
+        user enter or change them without removing and re-adding the integration; the
+        entry is reloaded so the new rates take effect on the next import.
+        """
+        entry = self._get_reconfigure_entry()
+
+        if user_input is not None:
+            return self.async_update_reload_and_abort(
+                entry,
+                data_updates={
+                    CONF_PEAK_RATE: user_input[CONF_PEAK_RATE],
+                    CONF_OFFPEAK_RATE: user_input[CONF_OFFPEAK_RATE],
+                    CONF_PEAK_START_HOUR: user_input[CONF_PEAK_START_HOUR],
+                    CONF_PEAK_END_HOUR: user_input[CONF_PEAK_END_HOUR],
+                },
+            )
+
+        # Pre-fill with the entry's current tariff, falling back to the hour defaults.
+        data = entry.data
+        schema = vol.Schema(
+            {
+                vol.Required(
+                    CONF_PEAK_RATE, default=data.get(CONF_PEAK_RATE)
+                ): _rate_selector(),
+                vol.Required(
+                    CONF_OFFPEAK_RATE, default=data.get(CONF_OFFPEAK_RATE)
+                ): _rate_selector(),
+                vol.Required(
+                    CONF_PEAK_START_HOUR,
+                    default=data.get(CONF_PEAK_START_HOUR, DEFAULT_PEAK_START_HOUR),
+                ): _hour_selector(),
+                vol.Required(
+                    CONF_PEAK_END_HOUR,
+                    default=data.get(CONF_PEAK_END_HOUR, DEFAULT_PEAK_END_HOUR),
+                ): _hour_selector(),
+            }
+        )
+        return self.async_show_form(step_id="reconfigure", data_schema=schema)

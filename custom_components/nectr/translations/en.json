@@ -11,10 +11,36 @@
       },
       "account": {
         "title": "Choose account",
-        "description": "Pick the Nectr account to import, and how many days of past usage to backfill once at setup.",
+        "description": "Pick the Nectr account to import, how many days of past usage to backfill once at setup, and your tariff rates so usage cost can be tracked on the Energy dashboard.",
         "data": {
           "account_number": "Account",
-          "days_to_load": "Days of history to load"
+          "days_to_load": "Days of history to load",
+          "peak_rate": "Peak rate (cents/kWh)",
+          "offpeak_rate": "Off-peak rate (cents/kWh)",
+          "peak_start_hour": "Peak start hour (0-23)",
+          "peak_end_hour": "Peak end hour (0-23)"
+        },
+        "data_description": {
+          "peak_rate": "Cost per kWh during the peak window.",
+          "offpeak_rate": "Cost per kWh outside the peak window.",
+          "peak_start_hour": "First hour of the peak window, in your account's local time. The default 15 means peak starts at 3pm.",
+          "peak_end_hour": "End of the peak window (exclusive). The default 21 means the last peak hour is 8pm and 9pm onward is off-peak."
+        }
+      },
+      "reconfigure": {
+        "title": "Update tariff",
+        "description": "Update the peak and off-peak rates and the peak window used to calculate usage cost. New rates apply to the next import; previously imported costs are not recalculated.",
+        "data": {
+          "peak_rate": "Peak rate (cents/kWh)",
+          "offpeak_rate": "Off-peak rate (cents/kWh)",
+          "peak_start_hour": "Peak start hour (0-23)",
+          "peak_end_hour": "Peak end hour (0-23)"
+        },
+        "data_description": {
+          "peak_rate": "Cost per kWh during the peak window.",
+          "offpeak_rate": "Cost per kWh outside the peak window.",
+          "peak_start_hour": "First hour of the peak window, in your account's local time. The default 15 means peak starts at 3pm.",
+          "peak_end_hour": "End of the peak window (exclusive). The default 21 means the last peak hour is 8pm and 9pm onward is off-peak."
         }
       }
     },
@@ -24,7 +50,8 @@
       "no_accounts": "No Nectr accounts were found for this login."
     },
     "abort": {
-      "already_configured": "This Nectr account is already configured."
+      "already_configured": "This Nectr account is already configured.",
+      "reconfigure_successful": "Tariff updated."
     }
   },
   "entity": {
