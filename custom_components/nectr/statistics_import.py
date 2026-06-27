@@ -82,6 +82,74 @@ def hourly_utc_starts(day: date, tz: tzinfo) -> list[datetime]:
     return starts
 
 
+def local_hours_for_day(day: date, tz: tzinfo) -> list[int]:
+    """
+    Return the local clock hour (0-23) of every hour boundary in a local calendar day.
+
+    Mirrors `hourly_utc_starts` exactly: it walks the same forward sequence of local
+    hour boundaries, so the returned hours align positionally with that function's UTC
+    starts and with the paired usage values. We read the hour from the true local
+    boundary rather than from the floored UTC start, because in half-hour-offset states
+    (SA, NT) the floored UTC start converts back to HH:30 in the previous clock hour,
+    which would misclassify the peak/offpeak boundary hours.
+    """
+    next_day = day + timedelta(days=1)
+    start_utc = datetime(day.year, day.month, day.day, tzinfo=tz).astimezone(timezone.utc)
+    end_utc = datetime(
+        next_day.year, next_day.month, next_day.day, tzinfo=tz
+    ).astimezone(timezone.utc)
+
+    hours: list[int] = []
+    current = start_utc
+    while current < end_utc:
+        hours.append(current.astimezone(tz).hour)
+        current += timedelta(hours=1)
+    return hours
+
+
+def is_peak_hour(hour: int, peak_start: int, peak_end: int) -> bool:
+    """
+    Return whether a local clock hour falls inside the peak window [peak_start, peak_end).
+
+    The window is half-open so an hour equal to `peak_end` is offpeak (e.g. with a 15-21
+    peak, the 21:00 hour is offpeak). Supports windows that wrap past midnight
+    (peak_start > peak_end), though the integration's defaults (15-21) do not wrap.
+    """
+    if peak_start <= peak_end:
+        return peak_start <= hour < peak_end
+    # Wrapping window, e.g. 22-06: peak is hour >= start OR hour < end.
+    return hour >= peak_start or hour < peak_end
+
+
+def cost_pairs(
+    pairs: list[tuple[datetime, float]],
+    local_hours: list[int],
+    peak_start: int,
+    peak_end: int,
+    peak_cents: float,
+    offpeak_cents: float,
+) -> list[tuple[datetime, float]]:
+    """
+    Turn (utc_start, kWh) pairs into (utc_start, cost_in_dollars) pairs.
+
+    Each hour's local clock hour (positionally aligned via `local_hours`) selects the
+    peak or offpeak rate. Rates are cents/kWh; cost is divided by 100 so the resulting
+    statistic is in dollars, which is what the Energy dashboard expects for cost tracking.
+    """
+    if len(local_hours) != len(pairs):
+        raise ValueError(
+            f"expected {len(pairs)} local hours to match usage pairs, "
+            f"got {len(local_hours)}"
+        )
+
+    cost_rows: list[tuple[datetime, float]] = []
+    for (start, kwh), hour in zip(pairs, local_hours):
+        is_peak = is_peak_hour(hour, peak_start, peak_end)
+        rate_cents = peak_cents if is_peak else offpeak_cents
+        cost_rows.append((start, kwh * rate_cents / 100.0))
+    return cost_rows
+
+
 def pair_usage(
     utc_starts: list[datetime],
     usage_descending: list[Optional[float]],

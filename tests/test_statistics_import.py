@@ -145,6 +145,89 @@ class CursorTests(unittest.TestCase):
         self.assertEqual(si.next_day_after(last_start, SYDNEY), date(2026, 6, 16))
 
 
+class LocalHoursForDayTests(unittest.TestCase):
+    def test_normal_day_is_0_to_23_in_order(self):
+        hours = si.local_hours_for_day(date(2026, 6, 15), SYDNEY)
+
+        self.assertEqual(hours, list(range(24)))
+
+    def test_aligns_positionally_with_utc_starts(self):
+        day = date(2026, 6, 15)
+        starts = si.hourly_utc_starts(day, SYDNEY)
+        hours = si.local_hours_for_day(day, SYDNEY)
+
+        self.assertEqual(len(hours), len(starts))
+
+    def test_half_hour_zone_keeps_true_local_hour(self):
+        # Adelaide is UTC+9:30; the stored UTC starts are floored to HH:00, but the local
+        # hour must come from the true boundary so the 15:00 peak start is not misread.
+        hours = si.local_hours_for_day(date(2026, 6, 15), ADELAIDE)
+
+        self.assertEqual(hours, list(range(24)))
+
+    def test_fall_back_day_repeats_the_overlap_hour(self):
+        # 5 Apr 2026: clocks go 03:00 -> 02:00, so local hour 2 occurs twice.
+        hours = si.local_hours_for_day(date(2026, 4, 5), SYDNEY)
+
+        self.assertEqual(len(hours), 25)
+        self.assertEqual(hours.count(2), 2)
+
+
+class IsPeakHourTests(unittest.TestCase):
+    def test_default_window_includes_start_excludes_end(self):
+        self.assertTrue(si.is_peak_hour(15, 15, 21))
+        self.assertTrue(si.is_peak_hour(20, 15, 21))
+        self.assertFalse(si.is_peak_hour(21, 15, 21))
+        self.assertFalse(si.is_peak_hour(14, 15, 21))
+
+    def test_wrapping_window_covers_midnight(self):
+        self.assertTrue(si.is_peak_hour(23, 22, 6))
+        self.assertTrue(si.is_peak_hour(5, 22, 6))
+        self.assertFalse(si.is_peak_hour(6, 22, 6))
+        self.assertFalse(si.is_peak_hour(12, 22, 6))
+
+
+class CostPairsTests(unittest.TestCase):
+    def test_offpeak_rate_converts_cents_to_dollars(self):
+        # 2 kWh at 20c/kWh off-peak should cost $0.40.
+        start = utc(2026, 6, 15, 0)
+        pairs = [(start, 2.0)]
+        hours = [10]  # 10am, outside the 15-21 peak window.
+
+        cost = si.cost_pairs(pairs, hours, 15, 21, 50.0, 20.0)
+
+        self.assertEqual(cost, [(start, 0.40)])
+
+    def test_peak_hour_uses_peak_rate(self):
+        start = utc(2026, 6, 15, 5)
+        pairs = [(start, 1.0)]
+        hours = [16]  # 4pm, inside peak.
+
+        cost = si.cost_pairs(pairs, hours, 15, 21, 50.0, 20.0)
+
+        self.assertEqual(cost, [(start, 0.50)])
+
+    def test_full_day_mixes_rates_and_builds_cumulative_dollars(self):
+        day = date(2026, 6, 15)
+        starts = si.hourly_utc_starts(day, SYDNEY)
+        hours = si.local_hours_for_day(day, SYDNEY)
+        pairs = [(start, 1.0) for start in starts]  # 1 kWh every hour.
+
+        cost = si.cost_pairs(pairs, hours, 15, 21, 50.0, 20.0)
+        rows, ending_sum, day_total = si.build_statistic_rows(cost, 0.0)
+
+        # 6 peak hours (15-20) at 50c + 18 off-peak hours at 20c = $3.00 + $3.60.
+        self.assertEqual(day_total, 6.60)
+        self.assertEqual(ending_sum, 6.60)
+        self.assertEqual(rows[0]["sum"], 0.20)
+
+    def test_length_mismatch_raises(self):
+        start = utc(2026, 6, 15, 0)
+
+        with self.assertRaises(ValueError):
+            si.cost_pairs([(start, 1.0)], [10, 11], 15, 21, 50.0, 20.0)
+
+
 class TimezoneForStateTests(unittest.TestCase):
     def test_known_states_map_case_insensitively(self):
         self.assertEqual(
