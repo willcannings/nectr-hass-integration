@@ -7,6 +7,9 @@ electricity consumption data every day and makes it available on the Energy dash
 
 - Imports hourly **grid consumption** as a cumulative `kWh` statistic
   (`nectr:<account>_consumption`) suitable for the Energy dashboard.
+- Imports the matching hourly **usage cost** as a cumulative statistic
+  (`nectr:<account>_consumption_cost`) for the Energy dashboard's cost tracking, using
+  the peak/off-peak rates you enter at setup.
 - Backfills a configurable number of past days **once** at setup (default 14).
 
 Because Nectr only provides historical electricity consumption data rather than live
@@ -37,17 +40,38 @@ Requires Home Assistant **2025.11** or newer.
 ## Setup
 
 1. Enter your Nectr login **email** and **password**.
-2. Pick the account (connection) to add (you'll probably only have one) and the number of
-   days of history to backfill.
+2. Pick the account (connection) to add (you'll probably only have one), the number of
+   days of history to backfill, and your tariff:
+   - **Peak rate** and **off-peak rate** in **cents/kWh** (enter them as they appear on
+     your bill, e.g. `20` for 20c/kWh).
+   - **Peak start hour** and **peak end hour** as local clock hours, `0`–`23`. The peak
+     window is `[start, end)`, so the defaults `15` and `21` mean peak runs 3pm–9pm and
+     the 9pm hour onward is off-peak.
 3. Finish. The backfill runs immediately; new days are picked up automatically.
+
+Each hour's cost is its usage multiplied by the peak or off-peak rate, depending on
+whether the hour falls inside the peak window (in the account's local time). Although you
+enter rates in **cents**, the cost statistic is stored in **dollars**, so the Energy
+dashboard shows it with your configured currency (e.g. 2 kWh at 20c/kWh appears as
+`$0.40`).
 
 ## Add to the Energy dashboard
 
 1. Go to **Settings → Energy**.
 2. Under **Electricity grid → Grid connections**, choose the
    **Nectr consumption (<your address>)** statistic.
+3. To track cost, expand that grid connection's **Cost tracking**, choose **Use an entity
+   tracking the total costs**, and select **Nectr consumption cost (<your address>)** as
+   the entity with the total costs.
 
 You can confirm the imported data under **Developer Tools → Statistics**.
+
+> **Already running an older version?** The tariff questions are only asked when you
+> first add the integration, so an entry created before this version has no rates and its
+> cost statistic records **$0**. Enter your rates via **Settings → Devices & services →
+> Nectr → Reconfigure**. New rates apply to the next import onward; costs already imported
+> at $0 are not recalculated. To get a fully-costed history, remove and re-add the
+> integration (which re-runs the backfill with your rates).
 
 ## Development
 
