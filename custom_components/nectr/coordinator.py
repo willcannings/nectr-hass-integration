@@ -36,10 +36,16 @@ from .const import (
     CONF_ACCOUNT_STATE,
     CONF_DAYS_TO_LOAD,
     CONF_EMAIL,
+    CONF_OFFPEAK_RATE,
     CONF_PASSWORD,
+    CONF_PEAK_END_HOUR,
+    CONF_PEAK_RATE,
+    CONF_PEAK_START_HOUR,
     DATA_LAST_DAY_TOTAL,
     DATA_LAST_IMPORTED_DATE,
     DEFAULT_DAYS_TO_LOAD,
+    DEFAULT_PEAK_END_HOUR,
+    DEFAULT_PEAK_START_HOUR,
     DOMAIN,
     ENERGY_UNIT,
     ENERGY_UNIT_CLASS,
@@ -50,8 +56,10 @@ from .nectr_session import NectrSession
 from .statistics_import import (
     baseline_row,
     build_statistic_rows,
+    cost_pairs,
     hourly_utc_starts,
     latest_eligible_day,
+    local_hours_for_day,
     next_day_after,
     pair_usage,
     timezone_name_for_state,
@@ -79,6 +87,16 @@ class NectrUpdateCoordinator(DataUpdateCoordinator[dict]):
             entry.data.get(CONF_DAYS_TO_LOAD, DEFAULT_DAYS_TO_LOAD)
         )
 
+        # Tariff config (rates are cents/kWh; hours are local clock hours).
+        self._peak_rate: float = float(entry.data.get(CONF_PEAK_RATE, 0.0))
+        self._offpeak_rate: float = float(entry.data.get(CONF_OFFPEAK_RATE, 0.0))
+        self._peak_start_hour: int = int(
+            entry.data.get(CONF_PEAK_START_HOUR, DEFAULT_PEAK_START_HOUR)
+        )
+        self._peak_end_hour: int = int(
+            entry.data.get(CONF_PEAK_END_HOUR, DEFAULT_PEAK_END_HOUR)
+        )
+
         tz_name = timezone_name_for_state(
             entry.data.get(CONF_ACCOUNT_STATE), hass.config.time_zone
         )
@@ -91,6 +109,20 @@ class NectrUpdateCoordinator(DataUpdateCoordinator[dict]):
             name=f"Nectr consumption ({self._account_address})".strip(),
             unit_of_measurement=ENERGY_UNIT,
             unit_class=ENERGY_UNIT_CLASS,
+            has_sum=True,
+            mean_type=StatisticMeanType.NONE,
+        )
+
+        # Cost statistic: same id as consumption with "_cost" appended. The value is a
+        # cumulative dollar sum; unit_of_measurement/unit_class are None so the Energy
+        # dashboard renders it with HA's configured currency (mirrors core's opower).
+        self.cost_statistic_id = f"{self.statistic_id}_cost"
+        self._cost_metadata: StatisticMetaData = StatisticMetaData(
+            source=DOMAIN,
+            statistic_id=self.cost_statistic_id,
+            name=f"Nectr consumption cost ({self._account_address})".strip(),
+            unit_of_measurement=None,
+            unit_class=None,
             has_sum=True,
             mean_type=StatisticMeanType.NONE,
         )
@@ -118,6 +150,7 @@ class NectrUpdateCoordinator(DataUpdateCoordinator[dict]):
         latest = latest_eligible_day(dt_util.now(self._tz))
 
         running_sum, first_day, seed_baseline = await self._resolve_cursor(latest)
+        running_cost_sum = await self._resolve_cost_sum()
 
         last_imported_date, last_day_total = self._initial_diagnostics()
 
@@ -146,14 +179,35 @@ class NectrUpdateCoordinator(DataUpdateCoordinator[dict]):
 
             rows, running_sum, day_total = build_statistic_rows(pairs, running_sum)
 
+            # Cost mirrors consumption: each hour's local clock hour selects the peak or
+            # offpeak rate, and the cumulative dollar sum is built the same way.
+            local_hours = local_hours_for_day(day, self._tz)
+            day_cost_pairs = cost_pairs(
+                pairs,
+                local_hours,
+                self._peak_start_hour,
+                self._peak_end_hour,
+                self._peak_rate,
+                self._offpeak_rate,
+            )
+            cost_rows, running_cost_sum, _ = build_statistic_rows(
+                day_cost_pairs, running_cost_sum
+            )
+
             # On a fresh import, seed a zero point before the first ever hour so the
-            # first hour's consumption is not swallowed as the dashboard baseline.
+            # first hour's consumption/cost is not swallowed as the dashboard baseline.
             if seed_baseline and rows:
                 rows = [baseline_row(rows[0]["start"]), *rows]
+                cost_rows = [baseline_row(cost_rows[0]["start"]), *cost_rows]
                 seed_baseline = False
 
             async_add_external_statistics(
                 self.hass, self._metadata, [StatisticData(**row) for row in rows]
+            )
+            async_add_external_statistics(
+                self.hass,
+                self._cost_metadata,
+                [StatisticData(**row) for row in cost_rows],
             )
             _LOGGER.debug(
                 "Imported %s hours for %s (%.3f kWh)", len(rows), day, day_total
@@ -196,6 +250,28 @@ class NectrUpdateCoordinator(DataUpdateCoordinator[dict]):
             return running_sum, next_day_after(last_start, self._tz), False
 
         return 0.0, latest - timedelta(days=self._days_to_load - 1), True
+
+    async def _resolve_cost_sum(self) -> float:
+        """
+        Return the running cumulative cost (dollars) to continue the cost statistic from.
+
+        Read from the cost statistic itself so cost stays self-consistent. The day window
+        is driven by the consumption cursor (`_resolve_cursor`); if cost statistics do not
+        yet exist on an install that already imported consumption, cost accrues only from
+        the next imported day forward.
+        """
+        last_stat = await get_instance(self.hass).async_add_executor_job(
+            get_last_statistics,
+            self.hass,
+            1,
+            self.cost_statistic_id,
+            False,
+            {"sum"},
+        )
+        rows = last_stat.get(self.cost_statistic_id)
+        if rows:
+            return float(rows[0].get("sum") or 0.0)
+        return 0.0
 
     @staticmethod
     def _row_start_to_utc(start) -> datetime:
