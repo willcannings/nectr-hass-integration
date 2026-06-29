@@ -6,7 +6,27 @@ This repository is a Home Assistant integration for Nectr electricity usage, pac
 under `custom_components/nectr/`. The API layer is
 `custom_components/nectr/nectr_session.py`; it is kept independent of Home Assistant so
 it can be exercised by `bin/day-usage.py` and the tests. The integration imports hourly
-usage into the recorder as long-term external statistics for the Energy dashboard.
+usage and cost into the recorder as long-term external statistics for the Energy
+dashboard.
+
+Two statistics are written per import:
+
+- **Consumption** (`nectr:<account>`) — cumulative kWh, unit `kWh`.
+- **Cost** (`nectr:<account>_cost`) — cumulative dollars, no unit (matches Home
+  Assistant's `opower` convention so the Energy dashboard renders it with the configured
+  currency). A zero baseline is seeded on a fresh import so the first hour's cost is not
+  swallowed as the dashboard baseline.
+
+Cost is calculated from tariff rates stored in the config entry. Rates are entered in
+cents/kWh (fractional cents allowed, matching how they appear on a Nectr statement) and
+stored in `const.py` config keys; the statistic value is divided by 100 to produce
+dollars.
+
+The tariff config keys are:
+- `CONF_PEAK_RATE` / `CONF_OFFPEAK_RATE` — rate in cents/kWh.
+- `CONF_PEAK_START_HOUR` / `CONF_PEAK_END_HOUR` — local clock hours 0–23 defining a
+  half-open `[start, end)` peak window. Supports windows that wrap past midnight.
+  Defaults are 15–21.
 
 ## API Reference
 
@@ -43,6 +63,27 @@ usage into the recorder as long-term external statistics for the Energy dashboar
   ```sh
   venv/bin/python -m unittest discover -s tests -v
   ```
+
+### Cost calculation
+
+The cost helpers in `custom_components/nectr/statistics_import.py` are HA-independent
+and unit-tested:
+
+- `local_hours_for_day(day, tz)` — returns the local clock hour of each hour boundary
+  in a calendar day, positionally aligned with `hourly_utc_starts`. Reads the true local
+  hour (not the floored UTC start) so half-hour-offset states (SA, NT) classify boundary
+  hours correctly.
+- `is_peak_hour(hour, peak_start, peak_end)` — half-open `[start, end)` test with
+  midnight-wrap support.
+- `cost_pairs(pairs, local_hours, peak_start, peak_end, peak_cents, offpeak_cents)` —
+  converts `(utc_start, kWh)` pairs to `(utc_start, dollars)` pairs.
+
+### Config flow
+
+The config flow (`config_flow.py`) collects tariff rates in the `account` step and
+stores them in the config entry. A `reconfigure` step is also provided so users who set
+up the integration before tariff support was added can enter their rates without removing
+and re-adding the integration.
 
 ## Credentials
 
