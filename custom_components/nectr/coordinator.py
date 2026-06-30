@@ -41,6 +41,7 @@ from .const import (
     CONF_PEAK_END_HOUR,
     CONF_PEAK_RATE,
     CONF_PEAK_START_HOUR,
+    DATA_LAST_DAY_COST,
     DATA_LAST_DAY_TOTAL,
     DATA_LAST_IMPORTED_DATE,
     DEFAULT_DAYS_TO_LOAD,
@@ -150,9 +151,18 @@ class NectrUpdateCoordinator(DataUpdateCoordinator[dict]):
         latest = latest_eligible_day(dt_util.now(self._tz))
 
         running_sum, first_day, seed_baseline = await self._resolve_cursor(latest)
-        running_cost_sum = await self._resolve_cost_sum()
+        running_cost_sum, has_cost_stats = await self._resolve_cost_sum()
 
-        last_imported_date, last_day_total = self._initial_diagnostics()
+        # When consumption stats already exist but cost stats do not (e.g. the user
+        # entered tariff rates via Reconfigure for the first time), backfill costs for
+        # the historical window before continuing with new days. seed_baseline is False
+        # only when consumption stats already exist.
+        if not has_cost_stats and not seed_baseline:
+            running_cost_sum = await self._backfill_cost_stats(
+                session, latest, first_day
+            )
+
+        last_imported_date, last_day_total, last_day_cost = self._initial_diagnostics()
 
         day = first_day
         while day <= latest:
@@ -190,7 +200,7 @@ class NectrUpdateCoordinator(DataUpdateCoordinator[dict]):
                 self._peak_rate,
                 self._offpeak_rate,
             )
-            cost_rows, running_cost_sum, _ = build_statistic_rows(
+            cost_rows, running_cost_sum, cost_day_total = build_statistic_rows(
                 day_cost_pairs, running_cost_sum
             )
 
@@ -214,11 +224,13 @@ class NectrUpdateCoordinator(DataUpdateCoordinator[dict]):
             )
             last_imported_date = day
             last_day_total = day_total
+            last_day_cost = cost_day_total
             day += timedelta(days=1)
 
         data = {
             DATA_LAST_IMPORTED_DATE: last_imported_date,
             DATA_LAST_DAY_TOTAL: last_day_total,
+            DATA_LAST_DAY_COST: last_day_cost,
         }
         await self._persist(data)
         return data
@@ -251,14 +263,13 @@ class NectrUpdateCoordinator(DataUpdateCoordinator[dict]):
 
         return 0.0, latest - timedelta(days=self._days_to_load - 1), True
 
-    async def _resolve_cost_sum(self) -> float:
+    async def _resolve_cost_sum(self) -> tuple[float, bool]:
         """
-        Return the running cumulative cost (dollars) to continue the cost statistic from.
+        Return the running cumulative cost (dollars) and whether cost stats exist.
 
-        Read from the cost statistic itself so cost stays self-consistent. The day window
-        is driven by the consumption cursor (`_resolve_cursor`); if cost statistics do not
-        yet exist on an install that already imported consumption, cost accrues only from
-        the next imported day forward.
+        Read from the cost statistic itself so cost stays self-consistent. Returns
+        (running_sum, True) when stats exist, (0.0, False) when they do not — the
+        caller uses the bool to decide whether a historical cost backfill is needed.
         """
         last_stat = await get_instance(self.hass).async_add_executor_job(
             get_last_statistics,
@@ -270,8 +281,85 @@ class NectrUpdateCoordinator(DataUpdateCoordinator[dict]):
         )
         rows = last_stat.get(self.cost_statistic_id)
         if rows:
-            return float(rows[0].get("sum") or 0.0)
-        return 0.0
+            return float(rows[0].get("sum") or 0.0), True
+        return 0.0, False
+
+    async def _backfill_cost_stats(
+        self,
+        session: NectrSession,
+        latest: date,
+        first_day: date,
+    ) -> float:
+        """
+        Write cost statistics for days that already have consumption stats but no cost.
+
+        Called once when cost stats are absent but consumption stats exist — typically
+        after a user enters tariff rates via Reconfigure on an existing install. Fetches
+        each day in the window [latest - days_to_load + 1, first_day - 1] from the
+        Nectr API, calculates costs using the current tariff, and writes cost-only stats.
+        Returns the running cost sum after the backfill so the normal refresh loop can
+        continue seamlessly from first_day.
+        """
+        backfill_start = latest - timedelta(days=self._days_to_load - 1)
+        backfill_end = first_day - timedelta(days=1)
+
+        if backfill_start > backfill_end:
+            # No historical days to backfill (e.g. days_to_load=1 or first_day is at
+            # the very start of the window).
+            return 0.0
+
+        _LOGGER.debug(
+            "Backfilling cost stats from %s to %s", backfill_start, backfill_end
+        )
+
+        running_cost_sum = 0.0
+        seeded_baseline = False
+        day = backfill_start
+        while day <= backfill_end:
+            response = await session.get_hourly_data(self._account_number, day)
+            if not response.success:
+                _LOGGER.debug(
+                    "Cost backfill: Nectr day %s not available, skipping", day
+                )
+                day += timedelta(days=1)
+                continue
+
+            utc_starts = hourly_utc_starts(day, self._tz)
+            try:
+                pairs = pair_usage(utc_starts, response.usage)
+            except ValueError as err:
+                _LOGGER.warning("Cost backfill: skipping day %s: %s", day, err)
+                day += timedelta(days=1)
+                continue
+
+            local_hours = local_hours_for_day(day, self._tz)
+            day_cost_pairs = cost_pairs(
+                pairs,
+                local_hours,
+                self._peak_start_hour,
+                self._peak_end_hour,
+                self._peak_rate,
+                self._offpeak_rate,
+            )
+            cost_rows, running_cost_sum, _ = build_statistic_rows(
+                day_cost_pairs, running_cost_sum
+            )
+
+            # Seed a zero baseline before the first ever cost row so the Energy
+            # dashboard doesn't swallow the first hour's cost as its baseline.
+            if not seeded_baseline and cost_rows:
+                cost_rows = [baseline_row(cost_rows[0]["start"]), *cost_rows]
+                seeded_baseline = True
+
+            async_add_external_statistics(
+                self.hass,
+                self._cost_metadata,
+                [StatisticData(**row) for row in cost_rows],
+            )
+            _LOGGER.debug("Backfilled cost for %s", day)
+            day += timedelta(days=1)
+
+        return running_cost_sum
 
     @staticmethod
     def _row_start_to_utc(start) -> datetime:
@@ -280,18 +368,19 @@ class NectrUpdateCoordinator(DataUpdateCoordinator[dict]):
             return dt_util.utc_from_timestamp(start)
         return dt_util.as_utc(start)
 
-    def _initial_diagnostics(self) -> tuple[date | None, float | None]:
+    def _initial_diagnostics(self) -> tuple[date | None, float | None, float | None]:
         """Seed diagnostics from prior in-memory data, else restored storage."""
         if self.data:
             return (
                 self.data.get(DATA_LAST_IMPORTED_DATE),
                 self.data.get(DATA_LAST_DAY_TOTAL),
+                self.data.get(DATA_LAST_DAY_COST),
             )
         if self._restored:
             stored_date = self._restored.get(DATA_LAST_IMPORTED_DATE)
             parsed = dt_util.parse_date(stored_date) if stored_date else None
-            return parsed, self._restored.get(DATA_LAST_DAY_TOTAL)
-        return None, None
+            return parsed, self._restored.get(DATA_LAST_DAY_TOTAL), self._restored.get(DATA_LAST_DAY_COST)
+        return None, None, None
 
     async def _persist(self, data: dict) -> None:
         """Persist diagnostic state (date serialised as ISO string)."""
@@ -302,5 +391,6 @@ class NectrUpdateCoordinator(DataUpdateCoordinator[dict]):
                     imported_date.isoformat() if imported_date else None
                 ),
                 DATA_LAST_DAY_TOTAL: data[DATA_LAST_DAY_TOTAL],
+                DATA_LAST_DAY_COST: data[DATA_LAST_DAY_COST],
             }
         )

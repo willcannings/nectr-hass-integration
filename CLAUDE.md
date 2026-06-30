@@ -81,9 +81,35 @@ and unit-tested:
 ### Config flow
 
 The config flow (`config_flow.py`) collects tariff rates in the `account` step and
-stores them in the config entry. A `reconfigure` step is also provided so users who set
-up the integration before tariff support was added can enter their rates without removing
-and re-adding the integration.
+stores them in the config entry. A `reconfigure` step lets users update credentials
+(email/password) and tariff rates without removing the integration. If email or password
+changes, the new credentials are validated against the Nectr API before saving.
+
+### Strings
+
+`strings.json` and `translations/en.json` are manually kept in sync — there is no
+generation script (unlike main hass-core). Edit both files together whenever adding or
+changing UI text.
+
+### Integration setup
+
+`async_setup_entry` backgrounds the initial refresh with
+`hass.async_create_task(coordinator.async_refresh())` so the config dialog closes
+immediately. Do not revert to `async_config_entry_first_refresh()` — it blocks the UI
+for the full backfill duration.
+
+### Coordinator data
+
+The coordinator returns `DATA_LAST_IMPORTED_DATE`, `DATA_LAST_DAY_TOTAL`, and
+`DATA_LAST_DAY_COST` in its `data` dict and persists them to storage. Sensors handle
+`None` data (before the first refresh completes). Cost backfill runs automatically on
+the first refresh when consumption stats exist but cost stats do not.
+
+### Sensor units
+
+`SensorDeviceClass.MONETARY` requires a runtime currency unit that can't be set
+statically in `SensorEntityDescription`. Override `native_unit_of_measurement` as a
+property on the entity class returning `self.hass.config.currency`.
 
 ## Credentials
 

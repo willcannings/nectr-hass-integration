@@ -28,9 +28,8 @@ DEFAULT_PEAK_END_HOUR = 21
 MIN_HOUR = 0
 MAX_HOUR = 23
 
-# Poll every 3 hours so a transient failure (HA offline, Nectr down) only delays a sync
-# by one cycle rather than a full day.
-UPDATE_INTERVAL = timedelta(hours=3)
+# Poll hourly so newly-available usage data appears within roughly an hour.
+UPDATE_INTERVAL = timedelta(hours=1)
 
 # Unit of the imported energy statistic.
 ENERGY_UNIT = "kWh"
@@ -43,3 +42,4 @@ STORAGE_VERSION = 1
 # Coordinator data keys.
 DATA_LAST_IMPORTED_DATE = "last_imported_date"
 DATA_LAST_DAY_TOTAL = "last_day_total_kwh"
+DATA_LAST_DAY_COST = "last_day_cost_dollars"

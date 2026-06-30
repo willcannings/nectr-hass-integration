@@ -185,30 +185,59 @@ class NectrConfigFlow(ConfigFlow, domain=DOMAIN):
     async def async_step_reconfigure(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
-        """Let an existing entry update its tariff (rates and peak window).
+        """Let an existing entry update credentials and/or tariff rates.
 
-        The four tariff fields are only collected at initial setup, so an entry created
-        before tariffs existed would otherwise record $0 cost forever. This step lets the
-        user enter or change them without removing and re-adding the integration; the
-        entry is reloaded so the new rates take effect on the next import.
+        Email is pre-filled with the current value; password is blank (leave empty to
+        keep the existing password). If either credential field changes, the new
+        credentials are validated against the Nectr API before saving.
         """
         entry = self._get_reconfigure_entry()
+        errors: dict[str, str] = {}
 
         if user_input is not None:
-            return self.async_update_reload_and_abort(
-                entry,
-                data_updates={
-                    CONF_PEAK_RATE: user_input[CONF_PEAK_RATE],
-                    CONF_OFFPEAK_RATE: user_input[CONF_OFFPEAK_RATE],
-                    CONF_PEAK_START_HOUR: user_input[CONF_PEAK_START_HOUR],
-                    CONF_PEAK_END_HOUR: user_input[CONF_PEAK_END_HOUR],
-                },
-            )
+            new_email = user_input[CONF_EMAIL]
+            new_password = user_input.get(CONF_PASSWORD, "")
+            current_email = entry.data[CONF_EMAIL]
+            current_password = entry.data[CONF_PASSWORD]
 
-        # Pre-fill with the entry's current tariff, falling back to the hour defaults.
+            # Use the new password if provided, otherwise keep the existing one.
+            final_password = new_password if new_password else current_password
+            credentials_changed = new_email != current_email or bool(new_password)
+
+            if credentials_changed:
+                session = NectrSession(get_async_client(self.hass))
+                try:
+                    logged_in = await session.login(new_email, final_password)
+                except Exception:  # noqa: BLE001
+                    _LOGGER.exception("Error connecting to Nectr during reconfigure")
+                    errors["base"] = "cannot_connect"
+                else:
+                    if not logged_in:
+                        errors["base"] = "invalid_auth"
+
+            if not errors:
+                return self.async_update_reload_and_abort(
+                    entry,
+                    data_updates={
+                        CONF_EMAIL: new_email,
+                        CONF_PASSWORD: final_password,
+                        CONF_PEAK_RATE: user_input[CONF_PEAK_RATE],
+                        CONF_OFFPEAK_RATE: user_input[CONF_OFFPEAK_RATE],
+                        CONF_PEAK_START_HOUR: user_input[CONF_PEAK_START_HOUR],
+                        CONF_PEAK_END_HOUR: user_input[CONF_PEAK_END_HOUR],
+                    },
+                )
+
+        # Pre-fill email with current value; password is always left blank for security.
         data = entry.data
         schema = vol.Schema(
             {
+                vol.Required(CONF_EMAIL, default=data[CONF_EMAIL]): selector.TextSelector(
+                    selector.TextSelectorConfig(type=selector.TextSelectorType.EMAIL)
+                ),
+                vol.Optional(CONF_PASSWORD): selector.TextSelector(
+                    selector.TextSelectorConfig(type=selector.TextSelectorType.PASSWORD)
+                ),
                 vol.Required(
                     CONF_PEAK_RATE, default=data.get(CONF_PEAK_RATE)
                 ): _rate_selector(),
@@ -225,4 +254,6 @@ class NectrConfigFlow(ConfigFlow, domain=DOMAIN):
                 ): _hour_selector(),
             }
         )
-        return self.async_show_form(step_id="reconfigure", data_schema=schema)
+        return self.async_show_form(
+            step_id="reconfigure", data_schema=schema, errors=errors
+        )

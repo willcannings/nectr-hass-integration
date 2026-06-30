@@ -28,9 +28,11 @@
         }
       },
       "reconfigure": {
-        "title": "Update tariff",
-        "description": "Update the peak and off-peak rates and the peak window used to calculate usage cost. New rates apply to the next import; previously imported costs are not recalculated.",
+        "title": "Update credentials or tariff",
+        "description": "Update your Nectr email or password, or change the tariff rates used to calculate usage cost. Leave password blank to keep the current password. New rates apply from the next import onward.",
         "data": {
+          "email": "Email",
+          "password": "New password (leave blank to keep current)",
           "peak_rate": "Peak rate (cents/kWh)",
           "offpeak_rate": "Off-peak rate (cents/kWh)",
           "peak_start_hour": "Peak start hour (0-23)",
@@ -51,7 +53,7 @@
     },
     "abort": {
       "already_configured": "This Nectr account is already configured.",
-      "reconfigure_successful": "Tariff updated."
+      "reconfigure_successful": "Configuration updated."
     }
   },
   "entity": {
@@ -61,6 +63,9 @@
       },
       "last_day_usage": {
         "name": "Last imported day usage"
+      },
+      "last_day_cost": {
+        "name": "Last imported day cost"
       }
     }
   }

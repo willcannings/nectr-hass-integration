@@ -18,12 +18,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: NectrConfigEntry) -> boo
     coordinator = NectrUpdateCoordinator(hass, entry)
     await coordinator.async_load_restored()
 
-    # The first refresh performs the immediate one-time backfill of prior days; every
-    # subsequent (3-hourly) refresh just imports newly-available days.
-    await coordinator.async_config_entry_first_refresh()
-
     entry.runtime_data = coordinator
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+
+    # Backfill runs in the background so the config dialog closes immediately.
+    # Sensors return None until the first refresh completes, which they handle.
+    hass.async_create_task(coordinator.async_refresh())
     return True
 
 

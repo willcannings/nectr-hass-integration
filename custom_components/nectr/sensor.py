@@ -16,7 +16,7 @@ from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from . import NectrConfigEntry
-from .const import DATA_LAST_DAY_TOTAL, DATA_LAST_IMPORTED_DATE, DOMAIN
+from .const import DATA_LAST_DAY_COST, DATA_LAST_DAY_TOTAL, DATA_LAST_IMPORTED_DATE, DOMAIN
 from .coordinator import NectrUpdateCoordinator
 
 # Diagnostic sensors. Neither sets a state_class: these are status read-outs, not values
@@ -34,6 +34,13 @@ SENSORS: tuple[SensorEntityDescription, ...] = (
         translation_key="last_day_usage",
         device_class=SensorDeviceClass.ENERGY,
         native_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
+        entity_category=EntityCategory.DIAGNOSTIC,
+    ),
+    SensorEntityDescription(
+        key=DATA_LAST_DAY_COST,
+        translation_key="last_day_cost",
+        device_class=SensorDeviceClass.MONETARY,
+        # Unit is set dynamically to hass.config.currency in native_unit_of_measurement.
         entity_category=EntityCategory.DIAGNOSTIC,
     ),
 )
@@ -71,6 +78,14 @@ class NectrDiagnosticSensor(CoordinatorEntity[NectrUpdateCoordinator], SensorEnt
             name=entry.title,
             manufacturer="Nectr",
         )
+
+    @property
+    def native_unit_of_measurement(self) -> str | None:
+        # The cost sensor's unit must match HA's configured currency at runtime; it
+        # cannot be set statically in the description without hardcoding a currency.
+        if self.entity_description.key == DATA_LAST_DAY_COST:
+            return self.hass.config.currency
+        return self.entity_description.native_unit_of_measurement
 
     @property
     def native_value(self) -> date | float | None:
